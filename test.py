@@ -97,6 +97,7 @@ def test(data,
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
+    hackdict = {}
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -132,6 +133,12 @@ def test(data,
             if len(pred) == 0:
                 if nl:
                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                    
+                # hackathon
+                img_name = f'{path.stem}.jpg'
+                if img_name not in hackdict.keys():
+                    hackdict[img_name] = []
+                    
                 continue
 
             # Predictions
@@ -159,17 +166,39 @@ def test(data,
                     wandb_images.append(wandb_logger.wandb.Image(img[si], boxes=boxes, caption=path.name))
             wandb_logger.log_training_progress(predn, path, names) if wandb_logger and wandb_logger.wandb_run else None
 
-            # Append to pycocotools JSON dictionary
+            # # Append to pycocotools JSON dictionary
+            # if save_json:
+            #     # [{"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}, ...
+            #     image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+            #     box = xyxy2xywh(predn[:, :4])  # xywh
+            #     box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
+            #     for p, b in zip(pred.tolist(), box.tolist()):
+            #         jdict.append({'image_id': image_id,
+            #                       'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
+            #                       'bbox': [round(x, 3) for x in b],
+            #                       'score': round(p[4], 5)})
+            
+            # hackathon
             if save_json:
-                # [{"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}, ...
-                image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+                """
+                hackathon format {"img_name_1.jpg": [[tl.x, tl.y, br.x, br.y, cls: str], [...]],
+                                    "img_name_2.jpg": [[...]]}
+                """
+                cls_dict = {0: 'cystic', 1: 'solid', 2: 'FFS'}
+                img_name = f'{path.stem}.jpg'
+                temp_output = []
                 box = xyxy2xywh(predn[:, :4])  # xywh
-                box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-                for p, b in zip(pred.tolist(), box.tolist()):
-                    jdict.append({'image_id': image_id,
-                                  'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
-                                  'bbox': [round(x, 3) for x in b],
-                                  'score': round(p[4], 5)})
+                TL = box[:, :2] - box[:, 2:] / 2  # xy center to top-left corner
+                BR = box[:, :2] + box[:, 2:] / 2  # xy center to bottom-right corner
+
+                for p, tl, br in zip(pred.tolist(), TL.tolist(), BR.tolist()):
+                    temp_output.append([tl[0], tl[1], br[0], br[1], cls_dict[int(p[5])]])
+
+                if img_name in hackdict.keys():
+                    hackdict[img_name].append(*temp_output)
+                else:
+                    hackdict[img_name] = temp_output
+
 
             # Assign all predictions as incorrect
             correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
@@ -248,13 +277,15 @@ def test(data,
         wandb_logger.log({"Bounding Box Debugger/Images": wandb_images})
 
     # Save JSON
-    if save_json and len(jdict):
+    # if save_json and len(jdict):
+    if save_json and len(hackdict):
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
         anno_json = './coco/annotations/instances_val2017.json'  # annotations json
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
         print('\nEvaluating pycocotools mAP... saving %s...' % pred_json)
         with open(pred_json, 'w') as f:
-            json.dump(jdict, f)
+            # json.dump(jdict, f)
+            json.dump(hackdict, f)
 
         try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
             from pycocotools.coco import COCO
@@ -290,7 +321,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
+    parser.add_argument('--iou-thres', type=float, default=0.4, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')

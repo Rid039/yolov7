@@ -1,0 +1,8 @@
+train: /home/rid039/IST/Hackathon/datasets/ori_80_20/train.txt  # 7660 images
+val: /home/rid039/IST/Hackathon/datasets/ori_80_20/val.txt  # 5730 images
+test: /home/rid039/IST/Hackathon/datasets/ori_80_20/test.txt  # 2500 images
+
+nc: 3
+
+# class names
+names: ['cystic', 'solid', 'FFS']
